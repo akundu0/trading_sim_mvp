@@ -11,6 +11,9 @@ INTERVAL = "1d"
 print("Fetching AAPL data...")
 data = yf.download(TICKER, period=PERIOD, interval=INTERVAL, auto_adjust=False, group_by='column')
 
+if isinstance(data.columns, pd.MultiIndex):
+    data.columns = ['_'.join([str(c) for c in col if c]).strip() for col in data.columns.values]
+
 # Calculate SMAs
 data['SMA_5'] = data['Close'].rolling(window=5).mean()
 data['SMA_10'] = data['Close'].rolling(window=10).mean()
