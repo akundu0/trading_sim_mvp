@@ -1,6 +1,6 @@
 # How to Run in Terminal
-Run streamlit app with: streamlit run app_ui.py <br>
-Run python logic with: python3 app.py
+Run streamlit app with: <code> streamlit run app_ui.py</code> <br>
+Run python logic with: <code> python3 app.py </code>
 
 # About this project
 Uses real-time data from yfinance, and Plotly and Streamlit to visualize results. 
