@@ -1,5 +1,5 @@
 # How to Run in Terminal
-Run streamlit app with: streamlit run app_ui.py
+Run streamlit app with: streamlit run app_ui.py <br>
 Run python logic with: python3 app.py
 
 # About this project
