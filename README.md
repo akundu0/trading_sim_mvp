@@ -1,5 +1,4 @@
-# About this project
-Uses real-time data from yfinance, and Plotly and Streamlit to visualize results. 
+Uses real-time market data from yfinance, and Plotly and Streamlit to visualize results. 
 
 # How to Run in Terminal
 Run streamlit app with: <code> streamlit run app_ui.py</code> <br>
