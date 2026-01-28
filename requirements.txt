@@ -4,3 +4,5 @@ plotly
 numpy
 scipy
 yfinance
+mibian
+matplotlib
