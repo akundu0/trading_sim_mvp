@@ -1,116 +1,117 @@
-import yfinance as yf
-import pandas as pd
-import numpy as np
-import mibian
-import matplotlib.pyplot as plt
+#!/usr/bin/env python3
+"""CLI entry point for the Trading Simulator.
 
-TICKER = "AAPL"
-PERIOD = "1mo"
-INTERVAL = "1d"
+Usage examples:
+    python app.py                         # defaults: AAPL, last 5 years
+    python app.py --ticker MSFT --sma-short 10 --sma-long 50
+    python app.py --ticker TSLA --start 2022-01-01 --end 2024-01-01 --capital 50000
+"""
 
-print("Fetching AAPL data...")
-data = yf.download(TICKER, period=PERIOD, interval=INTERVAL, auto_adjust=False, group_by='column')
+from __future__ import annotations
 
-if isinstance(data.columns, pd.MultiIndex):
-    data.columns = ['_'.join([str(c) for c in col if c]).strip() for col in data.columns.values]
+import argparse
+import sys
+from datetime import date, timedelta
 
-# Calculate SMAs
-data['SMA_5'] = data['Close'].rolling(window=5).mean()
-data['SMA_10'] = data['Close'].rolling(window=10).mean()
-
-cash = 10000
-shares = 0
-position = None  # "long" or None
-
-print("\nStarting simulation...\n")
-
-for i in range(len(data)):
-    sma5 = float(data['SMA_5'].iloc[i])
-    sma10 = float(data['SMA_10'].iloc[i])
-    close_price = float(data['Close'].iloc[i])
-    date = data.index[i].date()
-
-    if np.isnan(sma5) or np.isnan(sma10):
-        continue
-
-    # Simple crossover strategy
-    if sma5 > sma10 and position is None:
-        shares = cash / close_price
-        cash = 0
-        position = "long"
-        print(f"[{date}] BUY at ${close_price:.2f}")
-
-    elif sma5 < sma10 and position == "long":
-        cash = shares * close_price
-        shares = 0
-        position = None
-        print(f"[{date}] SELL at ${close_price:.2f}")
-
-# Close final position if open
-if position == "long":
-    final_price = float(data['Close'].iloc[-1])
-    cash = shares * final_price
-    shares = 0
-    print(f"[{data.index[-1].date()}] FINAL SELL at ${final_price:.2f}")
+from src.data.fetcher import fetch_prices, detect_close_column
+from src.strategies.sma_crossover import add_sma_signals, run_backtest
+from src.risk.monte_carlo import compute_log_return_params, simulate as mc_simulate
+from src.risk.options import price_options
+from src.metrics.performance import compute_metrics
 
 
-print("\nSimulation complete.")
-print(f"Final Portfolio Value: ${cash:.2f}")
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run an SMA-crossover backtest with Monte Carlo risk analysis."
+    )
+    parser.add_argument("--ticker", default="AAPL", help="Stock ticker symbol (default: AAPL)")
+    parser.add_argument("--start", default=str(date.today() - timedelta(days=5 * 365)),
+                        help="Start date YYYY-MM-DD (default: 5 years ago)")
+    parser.add_argument("--end", default=str(date.today()),
+                        help="End date YYYY-MM-DD (default: today)")
+    parser.add_argument("--sma-short", type=int, default=5, help="Short SMA window (default: 5)")
+    parser.add_argument("--sma-long", type=int, default=20, help="Long SMA window (default: 20)")
+    parser.add_argument("--capital", type=float, default=10_000, help="Initial capital (default: 10000)")
+    parser.add_argument("--txn-cost", type=float, default=0.001,
+                        help="Transaction cost as fraction (default: 0.001 = 0.1%%)")
+    parser.add_argument("--mc-runs", type=int, default=200, help="Monte Carlo paths (default: 200)")
+    parser.add_argument("--mc-days", type=int, default=252, help="Monte Carlo horizon in days (default: 252)")
+    parser.add_argument("--strike", type=float, default=0.0, help="Option strike; 0 = ATM (default: 0)")
+    parser.add_argument("--rf-rate", type=float, default=2.0, help="Risk-free rate %% (default: 2.0)")
+    return parser.parse_args(argv)
 
-# # # After simulation, calculating Sharpe Ratio
-data['Portfolio_Value'] = np.nan
-portfolio_value = cash
-if position == "long":
-    portfolio_value = shares * final_price
-else:
-    portfolio_value = cash
-data.iloc[-1, data.columns.get_loc('Portfolio_Value')] = portfolio_value
 
-# Example: calculate daily portfolio returns
-data['Portfolio_Return'] = data['Portfolio_Value'].pct_change()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
 
-# Remove NaNs
-returns = data['Portfolio_Return'].dropna()
+    # --- Data ---
+    print(f"Fetching {args.ticker} data ({args.start} → {args.end})...")
+    try:
+        data = fetch_prices(args.ticker, args.start, args.end)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
-# Risk-free rate (0 for simplicity, adjust if needed)
-risk_free_rate = 0.0
+    close_col = detect_close_column(data)
 
-# Sharpe Ratio: (mean return - risk-free rate) / std deviation of returns
-sharpe_ratio = (returns.mean() - risk_free_rate) / returns.std()
+    # --- Strategy ---
+    data = add_sma_signals(data, close_col, short_window=args.sma_short, long_window=args.sma_long)
+    result = run_backtest(data, close_col, initial_capital=args.capital, transaction_cost_pct=args.txn_cost)
 
-print(f"Sharpe Ratio: {sharpe_ratio:.2f}")
+    # --- Metrics ---
+    trade_profits = [t.profit_pct for t in result.trades if t.profit_pct is not None]
+    metrics = compute_metrics(result.portfolio_series, trade_profits, args.capital)
 
-### Options pricing
+    # --- Monte Carlo ---
+    last_price = float(data[close_col].iloc[-1])
+    mu, sigma = compute_log_return_params(data[close_col])
+    mc = mc_simulate(last_price, mu, sigma, days=args.mc_days, runs=args.mc_runs)
 
-# Parameters: underlying price, strike price, interest rate (%), days until expiration, volatility (%)
-c = mibian.BS([final_price, 150, 2, 30], volatility=20)
+    # --- Options ---
+    opt = price_options(last_price, args.strike, args.rf_rate, 30, sigma)
 
-print(f"Call Price: {c.callPrice:.2f}")
-print(f"Put Price: {c.putPrice:.2f}")
+    # --- Report ---
+    print(f"\n{'=' * 50}")
+    print(f"  {args.ticker} — SMA Crossover ({args.sma_short}/{args.sma_long})")
+    print(f"{'=' * 50}")
+    print(f"  Period:          {args.start} → {args.end}")
+    print(f"  Initial Capital: ${args.capital:,.2f}")
+    print(f"  Final Value:     ${metrics.final_value:,.2f}")
+    print(f"  Total Return:    {metrics.total_return_pct:+.2f}%")
+    print(f"  Sharpe Ratio:    {metrics.sharpe_ratio:.2f}")
+    print(f"  Max Drawdown:    {metrics.max_drawdown:.2%}")
+    print(f"  Trades:          {metrics.num_trades}")
+    print(f"  Win Rate:        {metrics.win_rate:.1f}%")
+    print(f"  Avg Trade Ret:   {metrics.avg_trade_return:+.2%}")
 
-### Monte Carlo Forecast
+    print(f"\n{'─' * 50}")
+    print(f"  Monte Carlo ({args.mc_runs} runs, {args.mc_days} days)")
+    print(f"{'─' * 50}")
+    print(f"  VaR  (95%):       {mc.var_95:+.2%}")
+    print(f"  CVaR (95%):       {mc.cvar_95:+.2%}")
+    print(f"  5th pctl price:   ${mc.percentile_5:,.2f}")
+    print(f"  95th pctl price:  ${mc.percentile_95:,.2f}")
 
-# Ensure final_price is a float
-final_price = float(data['Close'].iloc[-1])
+    if opt:
+        print(f"\n{'─' * 50}")
+        print(f"  Options (Black-Scholes)")
+        print(f"{'─' * 50}")
+        print(f"  Call Price:  ${opt.call_price:.2f}")
+        print(f"  Put Price:   ${opt.put_price:.2f}")
+        print(f"  Ann. Vol:    {opt.annual_vol_pct:.1f}%")
 
-# Prepare Monte Carlo params
-returns = data['Close'].pct_change().dropna()
-mu = float(returns.mean())
-sigma = float(returns.std())
-last_price = final_price
+    print(f"\n{'─' * 50}")
+    print("  Trade Log")
+    print(f"{'─' * 50}")
+    if result.trades:
+        for t in result.trades:
+            pnl = f"  ({t.profit_pct:+.2%})" if t.profit_pct is not None else ""
+            print(f"  [{t.date.date()}] {t.action:4s} @ ${t.price:.2f}{pnl}")
+    else:
+        print("  No trades triggered.")
 
-plt.figure(figsize=(10, 6))
+    print()
 
-num_simulations = 100
-num_days = 30
 
-for _ in range(num_simulations):
-    price_series = [last_price]
-    for _ in range(num_days):
-        price_series.append(price_series[-1] * (1 + np.random.normal(mu, sigma)))
-    plt.plot(range(len(price_series)), price_series, linewidth=1)
-
-plt.title("Monte Carlo Simulation")
-plt.xlabel("Days")
-plt.ylabel("Price")
-plt.show()
+if __name__ == "__main__":
+    main()

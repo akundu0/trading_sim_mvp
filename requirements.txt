@@ -1,8 +1,9 @@
-streamlit
-pandas
-plotly
-numpy
-scipy
-yfinance
-mibian
-matplotlib
+streamlit>=1.36.0
+pandas>=2.2.0
+plotly>=5.22.0
+numpy>=1.26.0
+scipy>=1.13.0
+yfinance>=0.2.40
+mibian>=0.1.3
+matplotlib>=3.9.0
+pytest>=8.0.0
