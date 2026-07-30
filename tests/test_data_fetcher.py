@@ -33,6 +33,14 @@ class TestValidateSchema:
         })
         _validate_schema(df, "TEST")  # should not raise
 
+    def test_valid_schema_with_ticker_suffix(self):
+        """Columns like 'Close_AAPL' (from flattened MultiIndex) should pass."""
+        df = pd.DataFrame({
+            "Open_AAPL": [1], "High_AAPL": [2], "Low_AAPL": [3],
+            "Close_AAPL": [4], "Volume_AAPL": [5], "Adj Close_AAPL": [6],
+        })
+        _validate_schema(df, "AAPL")  # should not raise
+
     def test_missing_column_raises(self):
         df = pd.DataFrame({"Open": [1], "High": [2], "Low": [3]})
         with pytest.raises(ValueError, match="missing required columns"):
