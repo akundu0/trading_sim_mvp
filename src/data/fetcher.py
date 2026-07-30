@@ -71,9 +71,16 @@ def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _validate_schema(df: pd.DataFrame, ticker: str) -> None:
-    """Ensure the DataFrame contains the expected OHLCV columns."""
-    columns_lower = {c.lower() for c in df.columns}
-    missing = {r for r in REQUIRED_COLUMNS if r.lower() not in columns_lower}
+    """Ensure the DataFrame contains the expected OHLCV columns.
+
+    Uses substring matching so that both ``"Close"`` and ``"Close_AAPL"``
+    (from a flattened MultiIndex) satisfy the ``"close"`` requirement.
+    """
+    columns_lower = [c.lower() for c in df.columns]
+    missing = {
+        r for r in REQUIRED_COLUMNS
+        if not any(r.lower() in col for col in columns_lower)
+    }
     if missing:
         raise ValueError(
             f"Data for '{ticker}' is missing required columns: {missing}. "
